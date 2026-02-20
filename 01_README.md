@@ -1,0 +1,156 @@
+# Machine Learning Alpha Strategy
+
+A machine learning-driven model that generates predictive alpha signals for U.S. equity returns. Built with rigorous walk-forward validation, feature engineering across multiple signal categories, and full model interpretability analysis. All results are genuinely out-of-sample.
+
+---
+
+## Strategy Overview
+
+**Core Idea:** Engineer a rich feature set from price and volume data, train ML models to predict next-month stock returns, and build a portfolio from the top 20% of predicted returns. Rebalance monthly.
+
+**Why ML over simple momentum?**
+A simple momentum strategy ranks stocks by one signal. ML combines 11 signals simultaneously and learns non-linear interactions between them — for example, how volatility modifies the momentum signal in different regimes.
+
+**The Critical Rule — No Lookahead Bias:**
+Every feature at time T uses only data available at or before time T. Walk-forward validation ensures the model never trains on future data. This is the most common failure mode in ML finance research.
+
+---
+
+## Project Architecture
+
+```
+Layer 1  →  Feature Engineering      (11 features across 4 categories)
+Layer 2  →  Model Training           (Ridge, Random Forest, XGBoost)
+Layer 3  →  Feature Importance       (permutation importance + IC stability)
+```
+
+---
+
+## Feature Engineering (Layer 1)
+
+11 features across 4 categories, computed monthly for each stock:
+
+| Category | Feature | Description |
+|----------|---------|-------------|
+| Momentum | ret_12_1 | 12-1 month momentum (Jegadeesh & Titman) |
+| Momentum | ret_6_1 | 6-1 month momentum |
+| Momentum | ret_3_1 | 3-1 month momentum |
+| Momentum | ret_24m | 24-month long-term momentum |
+| Reversal | ret_1m | 1-month return (short-term reversal) |
+| Volatility | vol_1m | 1-month realized volatility (annualized) |
+| Volatility | vol_3m | 3-month realized volatility (annualized) |
+| Volatility | vol_ratio | vol_1m / vol_3m (volatility trend) |
+| Technical | price_to_52w_high | Current price / 52-week high |
+| Technical | dist_from_sma12 | Distance from 12-month SMA |
+| Technical | dist_from_sma6 | Distance from 6-month SMA |
+
+**Pre-ML IC Analysis results:**
+- `vol_3m`, `vol_1m` → positive IC (high vol stocks outperform in bull markets)
+- `ret_12_1`, `ret_6_1`, `ret_3_1` → positive IC (momentum works)
+- `ret_1m` → **negative IC** (short-term reversal confirmed)
+- `price_to_52w_high` → negative IC (stocks near highs underperform slightly)
+
+![Feature Analysis](ml_features.png)
+
+---
+
+## Model Training — Walk-Forward Validation (Layer 2)
+
+Three models trained and compared using strict walk-forward cross-validation:
+
+| Model | Ann. Return | Sharpe | Max DD | Calmar |
+|-------|-------------|--------|--------|--------|
+| Ridge Regression | 18.3% | 0.85 | ~-25% | — |
+| Random Forest | **22.4%** | **1.05** | ~-25% | — |
+| XGBoost | 21.2% | **1.07** | ~-25% | — |
+| Equal-Weight Benchmark | ~15% | — | ~-25% | — |
+
+**All three models beat the benchmark out-of-sample.**
+
+The progression Ridge → Random Forest → XGBoost demonstrates that non-linear feature interactions are real and learnable. Tree models capture how momentum interacts with volatility regime in ways a linear model cannot.
+
+**Walk-Forward Setup:**
+- Minimum 4 years training before first prediction
+- Training window expands by 1 month each step
+- Test set is always the single next month
+- Zero data leakage by construction
+
+![Model Results](ml_model_results.png)
+
+---
+
+## Feature Importance & Interpretability (Layer 3)
+
+Four importance measures computed and compared:
+
+**Permutation Importance Results (most reliable measure):**
+
+| Feature | IC Drop | Interpretation |
+|---------|---------|---------------|
+| vol_3m | +0.050 | Most important — volatility regime drives returns |
+| ret_1m | +0.040 | Reversal signal is the second most important |
+| ret_6_1 | +0.020 | Medium-term momentum contributes |
+| ret_24m | +0.015 | Long-term momentum contributes |
+| dist_from_sma12 | +0.010 | Trend structure matters |
+| vol_ratio | -0.008 | Slightly harmful — may add noise |
+
+**Key Finding:** Volatility features dominated over pure momentum signals. The 3-month realized vol was the single most important feature, not 12-1 momentum. The IC stability heatmap shows why — vol signals were consistently positive across all regimes while momentum signals were highly regime-dependent.
+
+**IC Stability by Year:**
+- `vol_3m`, `vol_1m` → consistently green (positive IC) from 2015 onwards
+- `ret_12_1`, `ret_3_1` → regime-dependent, strong in trending markets, negative in choppy years (2016, 2022)
+
+![Feature Importance](ml_feature_importance.png)
+
+---
+
+## Key Findings
+
+1. **ML beats simple momentum** — XGBoost (Sharpe 1.07, Ann 21.2%) outperforms the equal-weight benchmark by combining 11 signals simultaneously vs ranking by one.
+
+2. **Volatility is the dominant signal** — Permutation importance identified 3-month realized vol as more predictive than any momentum feature. This is a large-cap bull market effect.
+
+3. **Reversal is real and learnable** — 1-month reversal (negative IC) is the second most important feature. A model that simultaneously fades recent moves while following longer-term trends captures dynamics no single-signal strategy can.
+
+4. **Walk-forward validation is non-negotiable** — Standard k-fold cross-validation would show dramatically inflated results due to lookahead bias. Every result here is genuinely out-of-sample.
+
+---
+
+## How to Run
+
+**Requirements:**
+```bash
+pip install scikit-learn xgboost pandas numpy matplotlib scipy
+```
+
+**Run in order:**
+```bash
+python ml_layer1_features.py     # Feature engineering (~3 min)
+python ml_layer2_fix.py          # Walk-forward model training (~8 min)
+python ml_layer3_importance.py   # Feature importance (~2 min)
+```
+
+**Note:** Requires `prices_daily.csv` and `prices_monthly.csv` from the Cross-Sectional Momentum project (or run that project's Layer 1 first).
+
+---
+
+## Tech Stack
+
+- **Models:** scikit-learn (Ridge, Random Forest), XGBoost
+- **Validation:** Custom walk-forward engine (no sklearn CV)
+- **Analysis:** pandas, numpy, scipy (Spearman IC)
+- **Visualization:** matplotlib
+
+---
+
+## Next Steps
+
+- [ ] Add fundamental features (P/E, P/B, earnings momentum)
+- [ ] Implement sector-neutral portfolio construction
+- [ ] Test LSTM / temporal models for sequence-aware predictions
+- [ ] Ensemble the three models with dynamic weighting
+- [ ] Add transaction cost optimization (reduce turnover without sacrificing alpha)
+
+---
+
+*Strategy in active development. All results use walk-forward out-of-sample validation. Does not represent live trading performance.*
